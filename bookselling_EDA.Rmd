@@ -1,0 +1,87 @@
+---
+title: "EDA-Bestselling Books R Notebook"
+output:
+  html_document:
+    df_print: paged
+---
+#**Dataset on Amazon's Top 50 bestselling books from 2009 to 2019.**
+
+```{r}
+#Loading the data
+
+library(readr)
+
+read_csv(file = "C:/Users/mohanraj/Desktop/bestsellers with categories.csv",na=c("",NA,"na"))->booksales_data
+```
+
+
+```{r}
+#Summary of data
+
+booksales_data
+
+summary(booksales_data)
+```
+
+#
+```{r}
+#count of books in each genre yearwise out of top50
+
+library(tidyverse)
+
+booksales_data %>% group_by(Year) %>% count(Genre) %>% 
+  pivot_wider(names_from = Genre,values_from = n)
+```
+
+
+```{r}
+#bestselling series
+n_distinct(booksales_data$Name)
+booksales_data %>% group_by(Name) %>% summarise(Total=n()) %>% filter(Total>1)
+```
+Out of 351 distinct books, 96 were book series
+
+```{r}
+#Top10 bestselling series and their respective genre
+
+booksales_data %>% group_by(Name) %>% summarise(Total=n()) %>% filter(Total>1)->x
+left_join(x=x,y = booksales_data) %>% select(Name,Genre,Total) %>% distinct() %>% slice_max(order_by = Total,n=10)
+```
+
+
+```{r}
+#Most popular book yearwise
+
+booksales_data %>% group_by(Year) %>% filter(Reviews==max(Reviews)) %>% arrange(Year)
+```
+
+
+```{r}
+#Top10 Authors with most topselling books
+
+booksales_data %>% count(Author) %>% slice_max(order_by = n,n = 10,with_ties = T)
+```
+
+
+```{r}
+#Book Consumption 
+
+booksales_data %>% group_by(Price) %>% summarise(Reviews=sum(Reviews)) %>% ggplot(aes(x=Price,y=Reviews))+geom_point(col='red',size=1)+geom_smooth(se = F)+ggtitle("Book Consumption Relation")+theme_gray()
+
+```
+It is evident from the graph that the most reviewed book (i.e) the most sold best selling books priced between $4 and $15.
+
+```{r}
+#Vizulation of best-selling Genre over the Years
+
+booksales_data %>% group_by(Year) %>% count(Genre) %>% ggplot(aes(x=as.factor(Year),fill=Genre,y=n))+geom_col(position='dodge',col='black')+theme_bw()+xlab("Year")+ylab("No. of books")
+```
+Non-fiction genre leads in 50 best selling books every year except in 2014. 
+
+```{r}
+#percentile of Price
+
+plot(ecdf(booksales_data$Price),main="CDF of Price",col="violet",xlab="Price",ylab="CDF")+abline(h = 0.75,v = 16,col=c("blue","red"))
+```
+From the graph, it is observed that 75% of the books that sold costed less than $16.
+
