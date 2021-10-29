@@ -1,0 +1,162 @@
+---
+title: "HEALTH INSURANCE PREDICTION"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r}
+#loading the dataset
+
+library(readr)
+insurance<-
+  read_csv("C:/Users/mohanraj/Desktop/insurance.csv")
+```
+
+```{r}
+#summary 
+
+head(insurance)
+summary(insurance)
+```
+
+```{r}
+skimr::skim(insurance)
+```
+
+```{r}
+#Outlier detection and treatment
+
+library(dlookr)
+diagnose_outlier(insurance)
+plot_outlier(insurance)
+boxplot(insurance$bmi)
+outlier_bmi<-boxplot.stats(insurance$bmi)
+outlier_bmi$out
+```
+outliers are detected in variables bmi and charges. Since our response variable is 
+charges, we treat outliers only in bmi. 
+
+```{r}
+#Treating outlier in bmi by capping
+
+library(tidyverse)
+lower_cap<-quantile(insurance$bmi,0.10)
+upper_cap<-quantile(insurance$bmi,0.90)
+insurance %>% 
+  mutate(bmi=if_else(bmi<lower_cap,lower_cap,(if_else(bmi>upper_cap,upper_cap,bmi))))->insurance
+```
+
+
+```{r}
+#missing values detection and treatment
+
+library(naniar)
+miss_var_summary(insurance)
+gg_miss_var(insurance)
+```
+There is no  missing values in any feature.
+
+```{r}
+ggplot(insurance)+geom_bar(aes(x=smoker,fill=region),color='black',position = 'dodge')+facet_wrap(~region,scales = "free_y",nrow = 4)+coord_flip()+theme_minimal()
+```
+Number of smokers and non smokers almost follows the same pattern across the region
+
+```{r}
+boxplot(charges~sex,data=insurance,main='charges across Sex',col=c("green","blue"),horizontal = T)
+```
+Costs billed by health insurance for 50% of women and men fall under same amount of charge & among the rest the cost billed for men is higher than women.
+
+```{r}
+boxplot(charges~smoker,data=insurance,main='charges across Smoker',
+        col=c("violet","brown"))
+ggplot(insurance,aes(x=age,y=charges))+geom_col(aes(fill=age))+facet_wrap(~smoker)+geom_tile()
+  
+```
+Health insurance billed is compartively much lower for non-smokers than smokers. 
+For non-smokers the medical costs rises steadily with increase in age from age 20 to 55.
+
+```{r}
+ggplot(insurance,aes(x=bmi,y=charges,col=smoker))+geom_point(aes(shape=smoker),size=2)+geom_smooth(se=F)+theme_grey()
+```
+The medical cost insurance increases for smoker With increase in bmi .
+
+```{r}
+#train-test split
+
+library(tidymodels)
+library(bestNormalize)
+initial_split(insurance,strata = smoker)->split_data
+training(split_data)->train_data
+testing(split_data)->test_data
+```
+
+```{r}
+#model-specification
+
+lin_mod<-linear_reg(mode = "regression")
+knn_mod<-nearest_neighbor(mode = 'regression',engine = "kknn",neighbors = tune())
+```
+
+```{r}
+#recipe for each model
+
+lin_res<-train_data %>% recipe(charges~.) %>% 
+  step_dummy(all_nominal_predictors()) %>%          #qualitative variable encoding
+  step_zv(all_predictors()) %>%                     #columns with single unique value removed
+  step_corr(all_numeric_predictors())               #removing variable with large absolute correlation with other variables
+
+knn_res<-train_data %>% recipe(charges~.) %>% 
+  step_dummy(all_nominal_predictors()) %>%         
+  step_zv(all_predictors()) %>% 
+  step_normalize(all_predictors()) %>%              #centred and scaled
+  step_best_normalize(all_numeric_predictors())     #transforming
+```
+
+```{r}
+#cross-validatation data
+
+train_resamples<-vfold_cv(train_data,strata = smoker)
+```
+
+```{r}
+wflow_train<-workflow_set(preproc = list(lin_res,knn_res),models = list(lin_mod,knn_mod),cross = FALSE)
+wmap_train<-wflow_train %>% workflow_map("tune_grid",resamples=train_resamples,grid=25,control=control_grid(save_workflow = T,save_pred = T))
+wmap_train 
+```
+
+```{r}
+#finding the best model among the models
+
+best_workflow_among_set<-wmap_train %>% autoplot(select_best=TRUE,rank_metric='rmse',metric='rmse')
+best_workflow_among_set
+```
+knn model best fits compared to linear model
+
+```{r}
+#best parameter selection
+
+best_result<-wmap_train %>% extract_workflow_set_result("recipe_2_nearest_neighbor") %>% select_best('rmse')
+best_result
+```
+
+```{r}
+#fitting
+
+fitted_model<-wmap_train %>% extract_workflow("recipe_2_nearest_neighbor") %>% finalize_workflow(best_result) %>% fit(train_data)
+fitted_model
+```
+
+```{r}
+#predicting 
+
+predicted_test<-fitted_model %>% predict(test_data) %>% bind_cols(test_data %>% select(charges))
+predicted_test
+```
+
+```{r}
+#evaulating the prediction
+
+predicted_test %>% rmse(truth=charges,.pred)
+```
+
