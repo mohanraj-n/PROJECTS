@@ -1,0 +1,163 @@
+---
+title: "HEART FAILURE PREDICTION"
+output:
+  html_document:
+    df_print: paged
+---
+#dataset variable description
+
+age - Age of patients\n
+anaemia - Decrease of red blood cells or hemoglobin (boolean)\n
+creatinine_phosphokinase - Level of the CPK enzyme in the blood (mcg/L)\n
+diabetes - f the patient has diabetes (boolean)\n
+ejection_fraction - Percentage of blood leaving the heart at each contraction\n (percentage)
+high_blood_pressure - If the patient has hypertension (boolean)\n
+platelets - Platelets in the blood (kiloplatelets/mL)\n
+serum_creatinine - Level of serum creatinine in the blood (mg/dL)\n
+serum_sodium - Level of serum sodium in the blood (mEq/L)\n
+sex - Woman or man (binary)\n
+smoking - If the patient smokes or not (boolean)\n
+time - Follow-up period (days)\n
+DEATH_EVENT - If the patient deceased during the follow-up period (boolean)
+
+
+
+
+```{r}
+#loading dataset
+
+library(readr)
+heart<-
+read_csv(file = "C:/Users/mohanraj/Desktop/heart_failure_clinical_records_dataset.csv")
+```
+
+```{r}
+
+head(heart)
+tail(heart)
+```
+
+```{r}
+#checking for incorrect data types and unusal values
+
+summary(heart)
+skimr::skim(heart)
+
+```
+There is no missing value in any variable. There seems to unusal value in creatinine_phlosphokinase.
+
+```{r}
+#outlier detection and treatment
+
+library(dlookr)
+library(tidyverse)
+select(heart,find_outliers(heart)) %>% plot_outlier()
+select(heart,find_outliers(heart)) %>% diagnose_outlier()
+
+```
+
+```{r}
+#capping
+
+heart<-
+heart %>% 
+  mutate(
+    creatinine_phosphokinase=imputate_outlier(heart,xvar = creatinine_phosphokinase,method="capping",no_attrs = T),
+    ejection_fraction=imputate_outlier(heart,xvar =ejection_fraction,method="capping",no_attrs = T),
+    platelets=imputate_outlier(heart,xvar =platelets,method="capping",no_attrs = T),
+    serum_creatinine=imputate_outlier(heart,xvar = serum_creatinine,method="capping",no_attrs = T),
+    serum_sodium=imputate_outlier(heart,xvar = serum_sodium,method="capping",no_attrs = T))
+```
+
+```{r}
+#correlation plot
+correlation=cor(heart)
+corrplot::corrplot(correlation,method = "color")
+```
+correlation plot indicates absence of correlation among the explanatory variables.\n
+Predictor variable death_event is negative correlated with time (i.e) possibility of dying increases with decrease in time\n
+From the plot it seems sex ,smoking and diabetes shows no correlation with death event\n
+lets further investigate
+
+```{r}
+#frequency of death_event across sex, smoking and diabetes
+
+sex_deathevent<-heart %>% group_by(sex) %>% count(DEATH_EVENT)
+smoking_deathevent<-heart %>% group_by(smoking) %>% count(DEATH_EVENT)
+diabetes_deathevent<-heart %>% group_by(diabetes) %>% count(DEATH_EVENT)
+```
+
+```{r}
+#independence test 
+
+chisq.test(sex_deathevent)
+chisq.test(smoking_deathevent)
+chisq.test(diabetes_deathevent)
+```
+Sex, diabetes and smoking are not statistically associated with death event
+
+```{r}
+#finding correlation significance of sex and death event with death event
+
+cor.test(heart$sex,heart$DEATH_EVENT)
+cor.test(heart$smoking,heart$DEATH_EVENT)
+cor.test(heart$diabetes,heart$DEATH_EVENT)
+```
+The p>0.05 for both tests. Therefore, it is confirmed that \n sex ,smoke and diabetes are not correlated with death event.
+
+```{r}
+#train-test split and validation 
+
+library(tidymodels)
+heart<-heart %>% mutate(DEATH_EVENT=as.factor(if_else(DEATH_EVENT==0,"0","1")))
+initial_split(heart,strata=DEATH_EVENT)->split
+training(split)->train
+testing(split)->test
+
+```
+
+```{r}
+#model-specification
+
+logistic_mod<-logistic_reg("classification")
+```
+
+```{r}
+#preprocessing and formula
+
+logistic_rec<-heart %>% recipe(DEATH_EVENT~.) %>% 
+  step_rm(sex,smoking,diabetes) %>% 
+  step_dummy(all_nominal_predictors()) %>%   
+  step_zv(all_predictors()) %>% 
+  step_corr(all_predictors())
+
+```
+
+```{r}
+#fitting model
+
+fitting<-workflow() %>% add_recipe(logistic_rec) %>% add_model(logistic_mod) %>% fit(train)
+```
+
+```{r}
+#predicting
+
+prediction<-fitting %>% predict(test) %>% bind_cols(test %>% select(DEATH_EVENT))
+prediction
+```
+
+```{r}
+#confusion matrix and prediction accuracy
+
+prediction %>% conf_mat(truth=DEATH_EVENT,.pred_class)
+prediction %>% accuracy(truth=DEATH_EVENT,.pred_class)
+
+```
+Accuracy is 0.8533. Therefore, the model accurately predicted for 85% of survival of patients.\n
+
+
+```{r}
+#roc_curve
+fitting %>% predict(test,type="prob") %>% bind_cols(test %>% select(DEATH_EVENT))%>% roc_curve(truth=DEATH_EVENT,.pred_0) %>% autoplot()
+```
+
